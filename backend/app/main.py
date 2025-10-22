@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.config import settings
 from app.db.session import init_db, close_db
-from app.api.v1 import auth
+from app.api.v1 import auth, portfolios, trades, market, agent
+from app.api.websocket import websocket_endpoint
 
 
 @asynccontextmanager
@@ -34,11 +35,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Include API routers
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(portfolios.router, prefix="/api/v1")
+app.include_router(trades.router, prefix="/api/v1")
+app.include_router(market.router, prefix="/api/v1")
+app.include_router(agent.router, prefix="/api/v1")
 
-# Note: Additional routers (portfolios, trades, agent, market, websocket)
-# follow the same pattern and are implemented in their respective modules
+# WebSocket endpoint
+app.websocket("/ws")(websocket_endpoint)
 
 
 @app.get("/")
@@ -47,7 +52,8 @@ async def root():
     return {
         "app": settings.app_name,
         "version": settings.app_version,
-        "status": "running"
+        "status": "running",
+        "docs": "/docs"
     }
 
 
