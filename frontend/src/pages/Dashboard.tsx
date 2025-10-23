@@ -20,7 +20,7 @@ export function Dashboard() {
 
   const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
 
-  const { subscribe, unsubscribe } = useWebSocket(WS_URL, {
+  const { subscribe } = useWebSocket(WS_URL, {
     onMessage: (message) => {
       if (message.type === 'portfolio_update' && portfolio) {
         // Update portfolio data
