@@ -25,6 +25,7 @@ export function PortfolioSettings() {
         setTickers(portfolio.tickers.join(','))
         setRiskProfile(portfolio.risk_profile)
       }).catch((err) => {
+        console.error('Failed to load portfolio:', err)
         setError('Failed to load portfolio')
       })
     }
