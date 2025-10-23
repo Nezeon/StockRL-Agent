@@ -25,6 +25,7 @@ export function PortfolioSettings() {
         setTickers(portfolio.tickers.join(','))
         setRiskProfile(portfolio.risk_profile)
       }).catch((err) => {
+        console.error('Failed to load portfolio:', err)
         setError('Failed to load portfolio')
       })
     }
@@ -74,6 +75,8 @@ export function PortfolioSettings() {
       }
       navigate('/')
     } catch (err: any) {
+      console.error('Failed to create portfolio:', err)
+      alert('Failed to create portfolio. Please try again.')
       setError(err.response?.data?.detail || 'Failed to save portfolio')
     } finally {
       setLoading(false)
