@@ -74,6 +74,8 @@ export function PortfolioSettings() {
       }
       navigate('/')
     } catch (err: any) {
+      console.error('Failed to create portfolio:', err)
+      alert('Failed to create portfolio. Please try again.')
       setError(err.response?.data?.detail || 'Failed to save portfolio')
     } finally {
       setLoading(false)
