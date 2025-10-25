@@ -139,26 +139,45 @@ class AgentManager:
         hyperparameters: dict
     ):
         """Create agent instance based on algorithm"""
+        # Filter hyperparameters to only include valid ones for each agent
+        valid_ppo_params = {
+            'learning_rate', 'gamma', 'gae_lambda', 'clip_epsilon', 
+            'value_coef', 'entropy_coef', 'max_grad_norm', 'n_epochs', 
+            'batch_size', 'hidden_size', 'device'
+        }
+        valid_dqn_params = {
+            'learning_rate', 'gamma', 'epsilon_start', 'epsilon_end', 
+            'epsilon_decay', 'target_update_freq', 'batch_size', 
+            'hidden_size', 'buffer_size', 'device'
+        }
+        valid_a2c_params = {
+            'learning_rate', 'gamma', 'value_coef', 'entropy_coef', 
+            'max_grad_norm', 'hidden_size', 'device'
+        }
+        
         if algorithm == "PPO":
+            filtered_params = {k: v for k, v in hyperparameters.items() if k in valid_ppo_params}
             return PPOAgent(
                 obs_dim=obs_dim,
                 action_dim=action_dim,
                 action_space_type=action_space_type,
-                **hyperparameters
+                **filtered_params
             )
         elif algorithm == "DQN":
+            filtered_params = {k: v for k, v in hyperparameters.items() if k in valid_dqn_params}
             return DQNAgent(
                 obs_dim=obs_dim,
                 action_dim=action_dim,
                 action_space_type=action_space_type,
-                **hyperparameters
+                **filtered_params
             )
         elif algorithm == "A2C":
+            filtered_params = {k: v for k, v in hyperparameters.items() if k in valid_a2c_params}
             return A2CAgent(
                 obs_dim=obs_dim,
                 action_dim=action_dim,
                 action_space_type=action_space_type,
-                **hyperparameters
+                **filtered_params
             )
         else:
             raise ValueError(f"Unknown algorithm: {algorithm}")
@@ -181,20 +200,39 @@ class AgentManager:
                 initial_cash=float(portfolio.initial_budget),
                 risk_profile=portfolio.risk_profile.value,
                 action_space_type=agent.action_space_type,
-                max_steps=1000
+                max_steps=200  # Reduced from 1000 for faster episodes during training
             )
 
             # Training parameters
             episodes = agent.hyperparameters.get("episodes", 100)
             save_interval = 10  # Save checkpoint every 10 episodes
+            log_interval = 20  # Log metrics every 20 steps for real-time updates
+            
+            # Global step counter across all episodes
+            global_step = 0
+            
+            # Log initial "warm-start" metric immediately so dashboard shows activity
+            initial_observation = await env.reset()
+            initial_nav = env._compute_nav()
+            await self._log_metric(
+                agent_run_id,
+                0,  # step 0
+                0.0,  # no reward yet
+                initial_nav,
+                db
+            )
+            global_step = 0
 
             for episode in range(episodes):
                 # Check if cancelled
                 if agent_run_id not in self.running_agents:
                     break
 
-                # Reset environment
-                observation = await env.reset()
+                # Reset environment (reuse initial observation for episode 0)
+                if episode == 0:
+                    observation = initial_observation
+                else:
+                    observation = await env.reset()
                 episode_reward = 0.0
                 done = False
                 step = 0
@@ -208,17 +246,28 @@ class AgentManager:
 
                     episode_reward += reward
                     step += 1
+                    global_step += 1
 
                     # Store in replay buffer (if applicable)
                     # Note: For PPO, we collect trajectories and update periodically
                     # Simplified here for demonstration
 
                     observation = next_observation
+                    
+                    # Log interim metrics during episode for real-time updates
+                    if global_step % log_interval == 0:
+                        await self._log_metric(
+                            agent_run_id,
+                            global_step,
+                            episode_reward,
+                            info["nav"],
+                            db
+                        )
 
-                # Log metrics
+                # Log end-of-episode metrics
                 await self._log_metric(
                     agent_run_id,
-                    step,
+                    global_step,
                     episode_reward,
                     info["nav"],
                     db
@@ -329,6 +378,19 @@ class AgentManager:
 
         db.add(metric)
         await db.commit()
+        
+        # Broadcast metric update via WebSocket
+        from app.api.websocket import broadcast_agent_metric
+        try:
+            await broadcast_agent_metric(agent_run_id, {
+                "step": step,
+                "episode_reward": float(reward),
+                "cumulative_reward": float(cumulative_reward),
+                "portfolio_nav": float(nav)
+            })
+        except Exception as e:
+            # Don't fail metric logging if broadcast fails
+            print(f"Failed to broadcast agent metric: {e}")
 
     async def _complete_agent_run(self, agent_run_id: UUID, final_nav: float, db: AsyncSession):
         """Mark agent run as completed"""

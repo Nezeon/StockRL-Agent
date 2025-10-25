@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+﻿import { useEffect, useRef, useState, useCallback } from 'react'
 
 interface UseWebSocketOptions {
   onMessage: (data: any) => void
@@ -10,25 +10,32 @@ interface UseWebSocketOptions {
 export function useWebSocket(url: string, options: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
-  const reconnectTimeoutRef = useRef<number>()
+  const reconnectTimeoutRef = useRef<number | undefined>(undefined)
 
   const connect = useCallback(() => {
     const token = localStorage.getItem('auth_token')
-    const wsUrl = `${url}?token=${token}`
+    const wsUrl = token ? `${url}?token=${token}` : url
 
-    wsRef.current = new WebSocket(wsUrl)
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
 
-    wsRef.current.onopen = () => {
+    ws.onopen = () => {
       setIsConnected(true)
       options.onConnect?.()
     }
 
-    wsRef.current.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      options.onMessage(data)
+    ws.onmessage = (event: MessageEvent) => {
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+        options.onMessage(data)
+      } catch (err) {
+        // don't crash on non-JSON payloads
+        // eslint-disable-next-line no-console
+        console.warn('Failed to parse websocket message', err)
+      }
     }
 
-    wsRef.current.onclose = () => {
+    ws.onclose = () => {
       setIsConnected(false)
       options.onDisconnect?.()
 
@@ -37,16 +44,22 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
         reconnectTimeoutRef.current = window.setTimeout(connect, 3000)
       }
     }
+
+    ws.onerror = (err) => {
+      // eslint-disable-next-line no-console
+      console.error('WebSocket error', err)
+    }
   }, [url, options])
 
   useEffect(() => {
     connect()
 
     return () => {
-      if (reconnectTimeoutRef.current) {
+      if (reconnectTimeoutRef.current !== undefined) {
         clearTimeout(reconnectTimeoutRef.current)
       }
       wsRef.current?.close()
+      wsRef.current = null
     }
   }, [connect])
 

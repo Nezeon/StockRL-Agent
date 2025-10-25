@@ -4,6 +4,7 @@ import { Header } from '../components/Header'
 import { RewardChart } from '../components/RewardChart'
 import { agentApi } from '../api/endpoints'
 import { formatDate, formatNumber } from '../utils/formatters'
+import { useWebSocket } from '../hooks/useWebSocket'
 import type { AgentRun } from '../types/api'
 
 export function AgentMonitor() {
@@ -13,9 +14,23 @@ export function AgentMonitor() {
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
+  const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
+
+  const { subscribe } = useWebSocket(WS_URL, {
+    onMessage: (message) => {
+      console.log('WebSocket message:', message)
+      if (message.type === 'agent_metric' && message.agent_run_id === runId) {
+        // Refresh stats when new metric arrives
+        fetchAgentStats()
+      }
+    },
+  })
+
   useEffect(() => {
     if (runId) {
       fetchAgentStats()
+      // Subscribe to agent metrics
+      subscribe(`agent_stats:${runId}`)
     }
   }, [runId])
 

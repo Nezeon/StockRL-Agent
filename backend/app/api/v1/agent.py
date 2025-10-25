@@ -119,9 +119,37 @@ async def stop_agent(
     return {"status": "stopped"}
 
 
-@router.get("/status", response_model=AgentStatusResponse)
+@router.get("/status")
+async def list_active_runs(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all active agent runs for the current user"""
+    # Get all portfolios for the user
+    portfolio_stmt = select(Portfolio).where(Portfolio.user_id == current_user.id)
+    portfolio_result = await db.execute(portfolio_stmt)
+    user_portfolios = portfolio_result.scalars().all()
+    portfolio_ids = [p.id for p in user_portfolios]
+
+    if not portfolio_ids:
+        return {"active_runs": []}
+
+    # Get all running agents for user's portfolios
+    stmt = select(AgentRun).where(
+        AgentRun.portfolio_id.in_(portfolio_ids),
+        AgentRun.status == AgentStatus.RUNNING
+    ).order_by(AgentRun.start_time.desc())
+    result = await db.execute(stmt)
+    active_runs = result.scalars().all()
+
+    return {
+        "active_runs": [AgentRunResponse.model_validate(run) for run in active_runs]
+    }
+
+
+@router.get("/status/{portfolio_id}", response_model=AgentStatusResponse)
 async def get_agent_status(
-    portfolio_id: UUID = Query(...),
+    portfolio_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

@@ -16,8 +16,9 @@ export function RewardChart({ agentRunId }: RewardChartProps) {
 
   const { subscribe, unsubscribe } = useWebSocket(WS_URL, {
     onMessage: (message) => {
-      if (message.type === 'agent_stat' && message.channel === `agent_stats:${agentRunId}`) {
-        const newMetric = message.data
+      console.log('RewardChart received message:', message)
+      if (message.type === 'agent_metric' && message.agent_run_id === agentRunId) {
+        const newMetric = message.metric
         setLatestMetrics(newMetric)
         setMetrics((prev) => {
           const updated = [...prev, {

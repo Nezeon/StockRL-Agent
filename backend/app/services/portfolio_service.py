@@ -26,18 +26,13 @@ class PortfolioService:
 
     async def get_portfolio_with_positions(self, portfolio_id: UUID, user_id: UUID) -> Optional[Portfolio]:
         """Get portfolio with positions, verifying ownership"""
-        stmt = select(Portfolio).where(
+        from sqlalchemy.orm import selectinload
+        stmt = select(Portfolio).options(selectinload(Portfolio.positions)).where(
             Portfolio.id == portfolio_id,
             Portfolio.user_id == user_id
         )
         result = await self.db.execute(stmt)
         portfolio = result.scalar_one_or_none()
-
-        if portfolio:
-            # Eager load positions
-            stmt = select(Position).where(Position.portfolio_id == portfolio_id)
-            result = await self.db.execute(stmt)
-            portfolio.positions = result.scalars().all()
 
         return portfolio
 
@@ -165,7 +160,8 @@ class PortfolioService:
 
     async def get_user_portfolios(self, user_id: UUID) -> List[Portfolio]:
         """Get all portfolios for a user"""
-        stmt = select(Portfolio).where(Portfolio.user_id == user_id).order_by(Portfolio.created_at.desc())
+        from sqlalchemy.orm import selectinload
+        stmt = select(Portfolio).options(selectinload(Portfolio.positions)).where(Portfolio.user_id == user_id).order_by(Portfolio.created_at.desc())
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
