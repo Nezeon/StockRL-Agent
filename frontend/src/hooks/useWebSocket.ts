@@ -30,7 +30,6 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
         options.onMessage(data)
       } catch (err) {
         // don't crash on non-JSON payloads
-        // eslint-disable-next-line no-console
         console.warn('Failed to parse websocket message', err)
       }
     }
@@ -46,7 +45,6 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
     }
 
     ws.onerror = (err) => {
-      // eslint-disable-next-line no-console
       console.error('WebSocket error', err)
     }
   }, [url, options])

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { marketApi } from '../api/endpoints'
 import type { OHLCV } from '../types/api'
@@ -14,16 +14,12 @@ export function PriceChart({ ticker, interval = '1d' }: PriceChartProps) {
   const [error, setError] = useState<string | null>(null)
   const [range, setRange] = useState('1W')
 
-  useEffect(() => {
-    fetchData()
-  }, [ticker, range])
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
 
     const endDate = new Date()
-    let startDate = new Date()
+    const startDate = new Date()
 
     switch (range) {
       case '1D':
@@ -61,7 +57,11 @@ export function PriceChart({ ticker, interval = '1d' }: PriceChartProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [ticker, range, interval])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   return (
     <div style={styles.container}>

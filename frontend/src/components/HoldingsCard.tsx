@@ -24,7 +24,7 @@ export function HoldingsCard({ portfolioId }: HoldingsCardProps) {
     },
   })
 
-  const fetchPositions = async () => {
+  const fetchPositions = React.useCallback(async () => {
     try {
       const response = await portfolioApi.getPositions(portfolioId)
       setPositions(response.data.positions)
@@ -35,7 +35,7 @@ export function HoldingsCard({ portfolioId }: HoldingsCardProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [portfolioId])
 
   useEffect(() => {
     fetchPositions()
@@ -44,7 +44,7 @@ export function HoldingsCard({ portfolioId }: HoldingsCardProps) {
     return () => {
       unsubscribe(`portfolio_updates:${portfolioId}`)
     }
-  }, [portfolioId, subscribe, unsubscribe])
+  }, [portfolioId, subscribe, unsubscribe, fetchPositions])
 
   if (loading) {
     return <div style={styles.message}>Loading...</div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Header } from '../components/Header'
 import { PortfolioCard } from '../components/PortfolioCard'
@@ -33,7 +33,7 @@ export function Dashboard() {
     },
   })
 
-  const fetchPortfolio = async () => {
+  const fetchPortfolio = useCallback(async () => {
     try {
       const response = await portfolioApi.list()
       const portfolios = response.data.portfolios
@@ -49,9 +49,9 @@ export function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [subscribe])
 
-  const fetchTrades = async () => {
+  const fetchTrades = useCallback(async () => {
     if (!portfolio) return
     try {
       const response = await portfolioApi.getTrades(portfolio.id, { limit: 10 })
@@ -59,17 +59,17 @@ export function Dashboard() {
     } catch (err) {
       console.error('Failed to fetch trades', err)
     }
-  }
+  }, [portfolio])
 
   useEffect(() => {
     fetchPortfolio()
-  }, [])
+  }, [fetchPortfolio])
 
   useEffect(() => {
     if (portfolio) {
       fetchTrades()
     }
-  }, [portfolio])
+  }, [portfolio, fetchTrades])
 
   const handleStartAgent = async (config: any) => {
     try {

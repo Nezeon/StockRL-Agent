@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Header } from '../components/Header'
 import { TradeTable } from '../components/TradeTable'
 import { portfolioApi } from '../api/endpoints'
@@ -17,7 +17,7 @@ export function TradeLog() {
 
   const limit = 50
 
-  const fetchPortfolio = async () => {
+  const fetchPortfolio = useCallback(async () => {
     try {
       const response = await portfolioApi.list()
       const portfolios = response.data.portfolios
@@ -27,9 +27,9 @@ export function TradeLog() {
     } catch (err) {
       console.error('Failed to fetch portfolio', err)
     }
-  }
+  }, [])
 
-  const fetchTrades = async () => {
+  const fetchTrades = useCallback(async () => {
     if (!portfolioId) return
     setLoading(true)
 
@@ -51,17 +51,17 @@ export function TradeLog() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [portfolioId, page, ticker, side, startDate, endDate])
 
   useEffect(() => {
     fetchPortfolio()
-  }, [])
+  }, [fetchPortfolio])
 
   useEffect(() => {
     if (portfolioId) {
       fetchTrades()
     }
-  }, [portfolioId, page])
+  }, [portfolioId, page, fetchTrades])
 
   const handleApplyFilters = () => {
     setPage(0)

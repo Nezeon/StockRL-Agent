@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Header } from '../components/Header'
 import { RewardChart } from '../components/RewardChart'
@@ -26,15 +26,7 @@ export function AgentMonitor() {
     },
   })
 
-  useEffect(() => {
-    if (runId) {
-      fetchAgentStats()
-      // Subscribe to agent metrics
-      subscribe(`agent_stats:${runId}`)
-    }
-  }, [runId])
-
-  const fetchAgentStats = async () => {
+  const fetchAgentStats = useCallback(async () => {
     if (!runId) return
     setLoading(true)
 
@@ -65,7 +57,15 @@ export function AgentMonitor() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [runId])
+
+  useEffect(() => {
+    if (runId) {
+      fetchAgentStats()
+      // Subscribe to agent metrics
+      subscribe(`agent_stats:${runId}`)
+    }
+  }, [runId, fetchAgentStats, subscribe])
 
   const handleStop = async () => {
     if (!runId) return
