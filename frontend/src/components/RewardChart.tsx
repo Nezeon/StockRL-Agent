@@ -18,7 +18,25 @@ export function RewardChart({ agentRunId }: RewardChartProps) {
     onMessage: (message) => {
       console.log('RewardChart received message:', message)
       if (message.type === 'agent_metric' && message.agent_run_id === agentRunId) {
-        const newMetric = message.metric
+        // Normalize numeric fields in incoming WS metric to avoid runtime type errors
+        const raw = message.metric || {}
+        const newMetric = {
+          step: Number(raw.step ?? 0),
+          cumulative_reward:
+            typeof raw.cumulative_reward === 'number'
+              ? raw.cumulative_reward
+              : parseFloat(raw.cumulative_reward ?? '0'),
+          loss:
+            raw.loss == null
+              ? null
+              : typeof raw.loss === 'number'
+              ? raw.loss
+              : parseFloat(raw.loss),
+          portfolio_nav:
+            typeof raw.portfolio_nav === 'number'
+              ? raw.portfolio_nav
+              : parseFloat(raw.portfolio_nav ?? '0'),
+        }
         setLatestMetrics(newMetric)
         setMetrics((prev) => {
           const updated = [...prev, {
@@ -39,15 +57,22 @@ export function RewardChart({ agentRunId }: RewardChartProps) {
     agentApi.getStats(agentRunId, { limit: 100 })
       .then((response) => {
         const metricsData = response.data.metrics || []
+        // Normalize numeric types because API returns Decimals as strings
         const chartData = metricsData.map((m: any) => ({
-          step: m.step,
-          reward: m.cumulative_reward,
-          loss: m.loss,
-          nav: m.portfolio_nav,
+          step: Number(m.step ?? 0),
+          reward: typeof m.cumulative_reward === 'number' ? m.cumulative_reward : parseFloat(m.cumulative_reward ?? '0'),
+          loss: m.loss == null ? null : (typeof m.loss === 'number' ? m.loss : parseFloat(m.loss)),
+          nav: typeof m.portfolio_nav === 'number' ? m.portfolio_nav : parseFloat(m.portfolio_nav ?? '0'),
         }))
         setMetrics(chartData)
         if (metricsData.length > 0) {
-          setLatestMetrics(metricsData[metricsData.length - 1])
+          const last = metricsData[metricsData.length - 1]
+          setLatestMetrics({
+            step: Number(last.step ?? 0),
+            cumulative_reward: typeof last.cumulative_reward === 'number' ? last.cumulative_reward : parseFloat(last.cumulative_reward ?? '0'),
+            loss: last.loss == null ? null : (typeof last.loss === 'number' ? last.loss : parseFloat(last.loss)),
+            portfolio_nav: typeof last.portfolio_nav === 'number' ? last.portfolio_nav : parseFloat(last.portfolio_nav ?? '0'),
+          })
         }
       })
       .catch(() => {

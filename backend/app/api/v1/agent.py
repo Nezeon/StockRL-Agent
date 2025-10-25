@@ -44,9 +44,17 @@ async def start_agent(
     stmt = select(AgentRun).where(
         AgentRun.portfolio_id == request.portfolio_id,
         AgentRun.status == AgentStatus.RUNNING
-    )
+    ).order_by(AgentRun.start_time.desc())
     result = await db.execute(stmt)
     existing_run = result.scalar_one_or_none()
+
+    # If DB says RUNNING but the manager doesn't track it, treat it as stale and stop it
+    if existing_run and existing_run.id not in agent_manager.running_agents:
+        existing_run.status = AgentStatus.STOPPED
+        existing_run.end_time = None  # will be set below for clarity
+        existing_run.end_time = existing_run.start_time  # mark ended at start to avoid overlap
+        await db.commit()
+        existing_run = None
 
     if existing_run:
         raise HTTPException(

@@ -16,6 +16,7 @@ from app.rl_agents.environment import TradingEnvironment
 from app.rl_agents.observation import ObservationBuilder
 from app.data_providers.registry import get_provider
 from app.config import settings
+from app.db.session import AsyncSessionLocal
 import os
 
 
@@ -79,6 +80,7 @@ class AgentManager:
 
     async def stop_agent(self, agent_run_id: UUID, db: AsyncSession):
         """Stop a running agent"""
+        # Cancel task if it's tracked in memory
         if agent_run_id in self.running_agents:
             task = self.running_agents[agent_run_id]
             task.cancel()
@@ -88,20 +90,20 @@ class AgentManager:
             except asyncio.CancelledError:
                 pass
 
-            # Update agent run status
-            stmt = select(AgentRun).where(AgentRun.id == agent_run_id)
-            result = await db.execute(stmt)
-            agent_run = result.scalar_one_or_none()
-
-            if agent_run:
-                agent_run.status = AgentStatus.STOPPED
-                agent_run.end_time = datetime.utcnow()
-                await db.commit()
-
-            # Cleanup
+            # Cleanup task bookkeeping
             del self.running_agents[agent_run_id]
             if agent_run_id in self.agent_instances:
                 del self.agent_instances[agent_run_id]
+
+        # Always update DB status even if the task wasn't found (treat as stale)
+        stmt = select(AgentRun).where(AgentRun.id == agent_run_id)
+        result = await db.execute(stmt)
+        agent_run = result.scalar_one_or_none()
+
+        if agent_run and agent_run.status != AgentStatus.STOPPED:
+            agent_run.status = AgentStatus.STOPPED
+            agent_run.end_time = datetime.utcnow()
+            await db.commit()
 
     async def get_agent_status(self, agent_run_id: UUID, db: AsyncSession) -> Dict:
         """Get status of an agent run"""
@@ -189,8 +191,14 @@ class AgentManager:
         portfolio: Portfolio,
         db: AsyncSession
     ):
-        """Run agent training loop"""
+        """Run agent training loop with interim metric logging for real-time feedback"""
         try:
+            # Debug log file
+            try:
+                with open(os.path.join(os.getcwd(), "training_debug.log"), "a", encoding="utf-8") as f:
+                    f.write(f"START _run_training run={agent_run_id} at {datetime.utcnow().isoformat()}\n")
+            except Exception:
+                pass
             # Create trading environment
             data_provider = get_provider()
             env = TradingEnvironment(
@@ -200,42 +208,41 @@ class AgentManager:
                 initial_cash=float(portfolio.initial_budget),
                 risk_profile=portfolio.risk_profile.value,
                 action_space_type=agent.action_space_type,
-                max_steps=200  # Reduced from 1000 for faster episodes during training
+                # Allow overriding from hyperparameters for faster feedback
+                max_steps=int(agent.hyperparameters.get("max_steps", 1000))
             )
 
             # Training parameters
-            episodes = agent.hyperparameters.get("episodes", 100)
+            episodes = int(agent.hyperparameters.get("episodes", 100))
             save_interval = 10  # Save checkpoint every 10 episodes
-            log_interval = 20  # Log metrics every 20 steps for real-time updates
-            
-            # Global step counter across all episodes
-            global_step = 0
-            
-            # Log initial "warm-start" metric immediately so dashboard shows activity
-            initial_observation = await env.reset()
-            initial_nav = env._compute_nav()
-            await self._log_metric(
-                agent_run_id,
-                0,  # step 0
-                0.0,  # no reward yet
-                initial_nav,
-                db
-            )
-            global_step = 0
+            log_interval = int(agent.hyperparameters.get("log_interval", 25))
+            if log_interval <= 0:
+                log_interval = 25
 
             for episode in range(episodes):
                 # Check if cancelled
                 if agent_run_id not in self.running_agents:
                     break
 
-                # Reset environment (reuse initial observation for episode 0)
-                if episode == 0:
-                    observation = initial_observation
-                else:
-                    observation = await env.reset()
+                # Reset environment
+                observation = await env.reset()
                 episode_reward = 0.0
                 done = False
                 step = 0
+
+                # Warm-start metric so UI shows activity immediately
+                try:
+                    await self._log_metric(agent_run_id, step, 0.0, env._compute_nav(), db)
+                    try:
+                        with open(os.path.join(os.getcwd(), "training_debug.log"), "a", encoding="utf-8") as f:
+                            f.write(f"LOG warm-start run={agent_run_id} step={step}\n")
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+                # Accumulate reward deltas between logs to keep cumulative accurate
+                interval_reward_accum = 0.0
 
                 while not done:
                     # Select action
@@ -245,33 +252,45 @@ class AgentManager:
                     next_observation, reward, done, info = await env.step(action)
 
                     episode_reward += reward
+                    interval_reward_accum += reward
                     step += 1
-                    global_step += 1
 
-                    # Store in replay buffer (if applicable)
-                    # Note: For PPO, we collect trajectories and update periodically
-                    # Simplified here for demonstration
-
+                    # Advance observation
                     observation = next_observation
-                    
-                    # Log interim metrics during episode for real-time updates
-                    if global_step % log_interval == 0:
-                        await self._log_metric(
-                            agent_run_id,
-                            global_step,
-                            episode_reward,
-                            info["nav"],
-                            db
-                        )
 
-                # Log end-of-episode metrics
-                await self._log_metric(
-                    agent_run_id,
-                    global_step,
-                    episode_reward,
-                    info["nav"],
-                    db
-                )
+                    # Emit interim metrics every N steps to provide real-time feedback
+                    if step % log_interval == 0:
+                        try:
+                            await self._log_metric(
+                                agent_run_id,
+                                step,
+                                interval_reward_accum,
+                                info["nav"],
+                                db
+                            )
+                            try:
+                                with open(os.path.join(os.getcwd(), "training_debug.log"), "a", encoding="utf-8") as f:
+                                    f.write(f"LOG interim run={agent_run_id} step={step}\n")
+                            except Exception:
+                                pass
+                        finally:
+                            interval_reward_accum = 0.0
+
+                    # Yield occasionally to avoid starving the event loop on long episodes
+                    if step % 100 == 0:
+                        await asyncio.sleep(0)
+
+                # Log any remaining accumulated reward at episode end (without double-counting)
+                if interval_reward_accum != 0.0:
+                    try:
+                        await self._log_metric(agent_run_id, step, interval_reward_accum, info["nav"], db)
+                        try:
+                            with open(os.path.join(os.getcwd(), "training_debug.log"), "a", encoding="utf-8") as f:
+                                f.write(f"LOG final-chunk run={agent_run_id} step={step}\n")
+                        except Exception:
+                            pass
+                    finally:
+                        interval_reward_accum = 0.0
 
                 # Save checkpoint periodically
                 if (episode + 1) % save_interval == 0:
@@ -283,6 +302,11 @@ class AgentManager:
         except Exception as e:
             # Mark as failed
             await self._fail_agent_run(agent_run_id, str(e), db)
+            try:
+                with open(os.path.join(os.getcwd(), "training_debug.log"), "a", encoding="utf-8") as f:
+                    f.write(f"ERROR run={agent_run_id} err={e}\n")
+            except Exception:
+                pass
             raise
 
     async def _run_live_trading(
@@ -355,29 +379,31 @@ class AgentManager:
         db: AsyncSession
     ):
         """Log agent metric to database"""
-        # Get cumulative reward
-        stmt = select(AgentMetric).where(
-            AgentMetric.agent_run_id == agent_run_id
-        ).order_by(AgentMetric.timestamp.desc()).limit(1)
-        result = await db.execute(stmt)
-        last_metric = result.scalar_one_or_none()
+        # Always use a fresh DB session for background logging to avoid request-scope session issues
+        async with AsyncSessionLocal() as _db:
+            # Get cumulative reward
+            stmt = select(AgentMetric).where(
+                AgentMetric.agent_run_id == agent_run_id
+            ).order_by(AgentMetric.timestamp.desc()).limit(1)
+            result = await _db.execute(stmt)
+            last_metric = result.scalar_one_or_none()
 
-        cumulative_reward = reward
-        if last_metric:
-            cumulative_reward += float(last_metric.cumulative_reward)
+            cumulative_reward = reward
+            if last_metric:
+                cumulative_reward += float(last_metric.cumulative_reward)
 
-        metric = AgentMetric(
-            agent_run_id=agent_run_id,
-            step=step,
-            episode_reward=Decimal(str(reward)),
-            cumulative_reward=Decimal(str(cumulative_reward)),
-            loss=None,  # TODO: Track loss
-            portfolio_nav=Decimal(str(nav)),
-            rolling_sharpe=None  # TODO: Calculate Sharpe
-        )
+            metric = AgentMetric(
+                agent_run_id=agent_run_id,
+                step=step,
+                episode_reward=Decimal(str(reward)),
+                cumulative_reward=Decimal(str(cumulative_reward)),
+                loss=None,  # TODO: Track loss
+                portfolio_nav=Decimal(str(nav)),
+                rolling_sharpe=None  # TODO: Calculate Sharpe
+            )
 
-        db.add(metric)
-        await db.commit()
+            _db.add(metric)
+            await _db.commit()
         
         # Broadcast metric update via WebSocket
         from app.api.websocket import broadcast_agent_metric
@@ -394,27 +420,29 @@ class AgentManager:
 
     async def _complete_agent_run(self, agent_run_id: UUID, final_nav: float, db: AsyncSession):
         """Mark agent run as completed"""
-        stmt = select(AgentRun).where(AgentRun.id == agent_run_id)
-        result = await db.execute(stmt)
-        agent_run = result.scalar_one_or_none()
+        async with AsyncSessionLocal() as _db:
+            stmt = select(AgentRun).where(AgentRun.id == agent_run_id)
+            result = await _db.execute(stmt)
+            agent_run = result.scalar_one_or_none()
 
-        if agent_run:
-            agent_run.status = AgentStatus.COMPLETED
-            agent_run.end_time = datetime.utcnow()
-            agent_run.final_nav = Decimal(str(final_nav))
-            await db.commit()
+            if agent_run:
+                agent_run.status = AgentStatus.COMPLETED
+                agent_run.end_time = datetime.utcnow()
+                agent_run.final_nav = Decimal(str(final_nav))
+                await _db.commit()
 
     async def _fail_agent_run(self, agent_run_id: UUID, error_message: str, db: AsyncSession):
         """Mark agent run as failed"""
-        stmt = select(AgentRun).where(AgentRun.id == agent_run_id)
-        result = await db.execute(stmt)
-        agent_run = result.scalar_one_or_none()
+        async with AsyncSessionLocal() as _db:
+            stmt = select(AgentRun).where(AgentRun.id == agent_run_id)
+            result = await _db.execute(stmt)
+            agent_run = result.scalar_one_or_none()
 
-        if agent_run:
-            agent_run.status = AgentStatus.FAILED
-            agent_run.end_time = datetime.utcnow()
-            agent_run.error_message = error_message
-            await db.commit()
+            if agent_run:
+                agent_run.status = AgentStatus.FAILED
+                agent_run.end_time = datetime.utcnow()
+                agent_run.error_message = error_message
+                await _db.commit()
 
     def _save_checkpoint(self, agent_run_id: UUID, agent):
         """Save agent checkpoint"""

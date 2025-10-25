@@ -315,11 +315,40 @@ class TradingEnvironment:
         total_fees = 0.0
 
         if self.action_space_type == "discrete":
-            total_fees = await self._execute_discrete_action(int(action))
+            # Coerce various action formats to a scalar index
+            action_index = self._coerce_discrete_action(action)
+            total_fees = await self._execute_discrete_action(action_index)
         else:
             total_fees = await self._execute_continuous_action(action)
 
         return total_fees
+
+    def _coerce_discrete_action(self, action) -> int:
+        """Convert an agent-produced action to a scalar discrete index safely.
+
+        Accepts: int, numpy scalar, 1D numpy array, one-hot/probability vector.
+        Fallback: argmax over vector-like inputs.
+        """
+        try:
+            import numpy as np
+            # Already an int
+            if isinstance(action, (int,)):
+                return int(action)
+            # Numpy scalar
+            if hasattr(action, "shape"):
+                arr = np.asarray(action)
+                if arr.ndim == 0:
+                    return int(arr.item())
+                # If single element array
+                if arr.size == 1:
+                    return int(arr.flatten()[0])
+                # Otherwise, interpret as logits/probabilities/one-hot -> take argmax
+                return int(np.argmax(arr))
+            # Fallback to Python conversion
+            return int(action)
+        except Exception:
+            # Safe fallback to HOLD
+            return 0
 
     async def _execute_discrete_action(self, action_index: int) -> float:
         """Execute discrete action (HOLD=0, BUY=1, SELL=2 per ticker)"""

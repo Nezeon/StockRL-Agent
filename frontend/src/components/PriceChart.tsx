@@ -46,7 +46,16 @@ export function PriceChart({ ticker, interval = '1d' }: PriceChartProps) {
         end_date: endDate.toISOString().split('T')[0],
         interval,
       })
-      setData(response.data.data)
+      // Normalize numeric fields to avoid runtime errors if API returns strings
+      const normalized = (response.data.data || []).map((d: any) => ({
+        timestamp: d.timestamp,
+        open: typeof d.open === 'number' ? d.open : parseFloat(d.open ?? '0'),
+        high: typeof d.high === 'number' ? d.high : parseFloat(d.high ?? '0'),
+        low: typeof d.low === 'number' ? d.low : parseFloat(d.low ?? '0'),
+        close: typeof d.close === 'number' ? d.close : parseFloat(d.close ?? '0'),
+        volume: typeof d.volume === 'number' ? d.volume : parseFloat(d.volume ?? '0'),
+      })) as OHLCV[]
+      setData(normalized)
     } catch (err: any) {
       setError('Unable to load data')
     } finally {
@@ -89,9 +98,11 @@ export function PriceChart({ ticker, interval = '1d' }: PriceChartProps) {
             <YAxis yAxisId="volume" orientation="right" />
             <Tooltip
               labelFormatter={(ts) => new Date(ts).toLocaleString()}
-              formatter={(value: any, name: string) =>
-                name === 'volume' ? value.toLocaleString() : `$${value.toFixed(2)}`
-              }
+              formatter={(value: any, name: string) => {
+                const num = typeof value === 'number' ? value : parseFloat(value ?? '0')
+                if (name === 'volume') return [Number.isFinite(num) ? num.toLocaleString() : '0', name]
+                return [Number.isFinite(num) ? `$${num.toFixed(2)}` : '$0.00', name]
+              }}
             />
             <Legend />
             <Line

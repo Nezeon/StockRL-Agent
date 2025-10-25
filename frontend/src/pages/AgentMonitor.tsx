@@ -41,7 +41,25 @@ export function AgentMonitor() {
     try {
       const response = await agentApi.getStats(runId, { limit: 1000 })
       setAgentRun(response.data.agent_run)
-      setSummary(response.data.summary)
+      const s = response.data.summary || {}
+      // Normalize summary numeric fields to numbers to keep formatters safe
+      const normalizedSummary = {
+        total_steps: Number(s.total_steps ?? 0),
+        total_episodes: Number(s.total_episodes ?? 0),
+        avg_episode_reward:
+          typeof s.avg_episode_reward === 'number'
+            ? s.avg_episode_reward
+            : parseFloat(s.avg_episode_reward ?? '0'),
+        max_drawdown:
+          typeof s.max_drawdown === 'number'
+            ? s.max_drawdown
+            : parseFloat(s.max_drawdown ?? '0'),
+        final_sharpe:
+          typeof s.final_sharpe === 'number'
+            ? s.final_sharpe
+            : parseFloat(s.final_sharpe ?? '0'),
+      }
+      setSummary(normalizedSummary)
     } catch (err) {
       console.error('Failed to fetch agent stats', err)
     } finally {
